@@ -1,72 +1,79 @@
-// index.js con logging detallado para depurar
-const express = require("express");
-const multer = require("multer");
-const sharp = require("sharp");
-const fs = require("fs");
-const path = require("path");
-const { createGradientBackground } = require("./utils/generateBackground");
+// index.js
+const express = require('express');
+const multer = require('multer');
+const sharp = require('sharp');
+const path = require('path');
+const fs = require('fs');
+const cors = require('cors');
 
 const app = express();
-const upload = multer({ dest: "uploads/" });
-const PORT = process.env.PORT || 3000;
+const upload = multer({ storage: multer.memoryStorage() });
 
-app.post("/process", upload.single("file"), async (req, res) => {
+app.use(cors());
+
+const OUTPUT_DIR = path.join(__dirname, 'output');
+if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR);
+
+app.post('/process', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
-      console.error("No se recibió ningún archivo.");
-      return res.status(400).json({ status: "error", message: "No file uploaded" });
+      return res.status(400).json({ status: 'error', message: 'No file uploaded.' });
     }
 
-    console.log("Archivo recibido:", req.file.originalname);
+    const originalImage = sharp(req.file.buffer);
+    const metadata = await originalImage.metadata();
 
-    const originalPath = req.file.path;
-    const outputDir = path.join(__dirname, "output");
-    if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir);
+    const outputWidth = 1000;
+    const outputHeight = 700;
 
-    const outputFile = `img_${Date.now()}.png`;
-    const outputPath = path.join(outputDir, outputFile);
-
-    const WIDTH = 1000;
-    const HEIGHT = 700;
-    const BACKGROUND_COLOR = "#ea8f07"; // Color corregido sin alfa
-
-    console.log("Procesando imagen con sharp...");
-    const image = sharp(originalPath);
-    const metadata = await image.metadata();
-    console.log("Metadata de la imagen:", metadata);
-
-    const resized = await image
-      .resize(WIDTH, HEIGHT, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
-      .png()
+    // Resize main image to fit inside the canvas
+    const resizedImageBuffer = await originalImage
+      .resize({ width: outputWidth - 200, height: outputHeight - 200, fit: 'inside' })
       .toBuffer();
 
-    console.log("Generando fondo degradado...");
-    const background = await createGradientBackground(WIDTH, HEIGHT, "#ffffff", BACKGROUND_COLOR);
+    // Create a blurred version of the image for background
+    const blurredBackground = await originalImage
+      .resize({ width: outputWidth, height: outputHeight, fit: 'cover' })
+      .blur(50)
+      .toBuffer();
 
-    console.log("Combinando imagen con fondo...");
-    const composite = await sharp(background)
-      .composite([{ input: resized, gravity: "center" }])
-      .png()
-      .toFile(outputPath);
+    // Apply a semi-transparent overlay to match the app background color
+    const overlayColor = '#ea8f07';
+    const backgroundOverlay = Buffer.from(
+      `<svg width="${outputWidth}" height="${outputHeight}" xmlns="http://www.w3.org/2000/svg">
+        <rect width="100%" height="100%" fill="${overlayColor}" fill-opacity="0.2"/>
+      </svg>`
+    );
 
-    console.log("Imagen final guardada en:", outputPath);
+    const backgroundWithOverlay = await sharp(blurredBackground)
+      .composite([{ input: backgroundOverlay, blend: 'over' }])
+      .toBuffer();
 
-    const finalUrl = `${req.protocol}://${req.get("host")}/output/${outputFile}`;
-    res.json({ status: "ok", result: { url: finalUrl } });
-  } catch (err) {
-    console.error("Error durante el procesamiento:", err);
-    res.status(500).json({ status: "error", message: "Processing failed." });
+    // Composite final image
+    const finalImage = await sharp(backgroundWithOverlay)
+      .composite([{
+        input: resizedImageBuffer,
+        top: Math.round((outputHeight - metadata.height) / 2),
+        left: Math.round((outputWidth - metadata.width) / 2),
+      }])
+      .jpeg()
+      .toBuffer();
+
+    const filename = `processed_${Date.now()}.jpg`;
+    const filepath = path.join(OUTPUT_DIR, filename);
+    fs.writeFileSync(filepath, finalImage);
+
+    return res.json({ status: 'success', url: `${req.protocol}://${req.get('host')}/output/${filename}` });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: 'error', message: 'Processing failed.' });
   }
 });
 
-app.use("/output", express.static(path.join(__dirname, "output")));
+app.use('/output', express.static(path.join(__dirname, 'output')));
 
-app.get("/", (req, res) => {
-  res.send("Microservicio de procesamiento de imágenes activo.");
-});
-
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
-
 
