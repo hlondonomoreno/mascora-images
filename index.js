@@ -28,7 +28,7 @@ app.post("/process", upload.single("file"), async (req, res) => {
 
     const WIDTH = 1000;
     const HEIGHT = 700;
-    const BACKGROUND_COLOR = "#d7810e80";
+    const BACKGROUND_COLOR = "#ea8f07"; // Color corregido sin alfa
 
     console.log("Procesando imagen con sharp...");
     const image = sharp(originalPath);
@@ -68,4 +68,5 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
+
 
